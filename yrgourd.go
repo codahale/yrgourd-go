@@ -215,7 +215,7 @@ func (c *connection) Read(p []byte) (n int, err error) {
 		return
 	}
 
-	// Read and decrypt the message length.
+	// Read and decrypt the header and decode the message length, if any.
 	header := allocSlice(c.recvBuf, 4+3)
 	if _, err := io.ReadFull(c.rw, header[4:]); err != nil {
 		return 0, err
@@ -244,7 +244,7 @@ func (c *connection) Read(p []byte) (n int, err error) {
 		return c.Read(p)
 	}
 
-	// Read and open the message.
+	// Otherwise, read and open the message.
 	message := allocSlice(c.recvBuf[:0], messageLen+lockstitch.TagLen)
 	if _, err := io.ReadFull(c.rw, message); err != nil {
 		return 0, err
@@ -274,15 +274,12 @@ func (c *connection) Write(p []byte) (n int, err error) {
 		// Encapsulate a shared secret with the receiver's encapsulation key.
 		ratchetSS, ratchetCT := c.ek.Encapsulate()
 
-		// Encrypt and send an all-zeroes header.
+		// Encrypt an all-zeroes header.
 		header := allocSlice(c.sendBuf[:0], 4)
 		header = c.send.Encrypt("header", header[:0], header[:3])
-		if _, err := c.rw.Write(header); err != nil {
-			return 0, err
-		}
 
-		// Encrypt and send the encapsulated key.
-		message := c.send.Seal("message", c.sendBuf[:0], ratchetCT)
+		// Seal the encapsulated key, append it to the header, and send both.
+		message := c.send.Seal("message", header, ratchetCT)
 		if n, err := c.rw.Write(message); err != nil {
 			return n, err
 		}
@@ -291,16 +288,13 @@ func (c *connection) Write(p []byte) (n int, err error) {
 		c.send.Mix("ratchet-ss", ratchetSS)
 	}
 
-	// Encode a header with a 3-byte big endian message length.
+	// Encode a header with a 3-byte big endian message length and encrypt it.
 	header := allocSlice(c.sendBuf[:0], 4)
 	binary.BigEndian.PutUint32(header, uint32(len(p)))
 	header = c.send.Encrypt("header", header[1:1], header[1:])
-	if _, err := c.rw.Write(header); err != nil {
-		return 0, err
-	}
 
-	// Seal the message and send it.
-	message := c.send.Seal("message", c.sendBuf[:0], p)
+	// Seal the message, append it to the header, and send it.
+	message := c.send.Seal("message", header, p)
 	if _, err := c.rw.Write(message); err != nil {
 		return 0, err
 	}
