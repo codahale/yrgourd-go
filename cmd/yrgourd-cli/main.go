@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 
 	"github.com/codahale/yrgourd-go"
 )
@@ -326,12 +327,14 @@ func sink(args []string) error {
 			defer conn.Close()
 			defer log.Println("closed connection")
 
+			start := time.Now()
 			n, err := io.Copy(io.Discard, conn)
 			if err != nil {
 				log.Println("error reading data", err)
 			}
+			elapsed := time.Since(start)
 
-			log.Println("read bytes", n)
+			log.Printf("read %v bytes in %v (%f MiB/sec)", n, elapsed, float64(n)/1024/1024/float64(elapsed.Seconds()))
 		}(conn)
 	}
 }
