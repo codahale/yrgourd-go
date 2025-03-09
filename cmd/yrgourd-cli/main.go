@@ -267,13 +267,43 @@ func reverseProxy(args []string) error {
 }
 
 func stream(args []string) error {
-	var addr string
+	var addr, isStr, rsStr string
 	var size int64
 	cmd := flag.NewFlagSet("stream", flag.ExitOnError)
 	cmd.StringVar(&addr, "addr", "127.0.0.1:4040", "the address to connect to")
 	cmd.Int64Var(&size, "size", 1024*1024*1024, "the number of bytes to write")
+	cmd.StringVar(&isStr, "client_key", "", "the private key of the client, if any")
+	cmd.StringVar(&rsStr, "server_key", "", "the public key of the server, if any")
 	if err := cmd.Parse(args); err != nil {
 		return err
+	}
+
+	if (isStr == "" && rsStr != "") || (isStr != "" && rsStr == "") {
+		return fmt.Errorf("must specify either both -client_key and -server_key or neither")
+	}
+
+	var is *mlkem.DecapsulationKey768
+	var rs *mlkem.EncapsulationKey768
+	if isStr != "" && rsStr != "" {
+		isB, err := hex.DecodeString(isStr)
+		if err != nil {
+			return err
+		}
+
+		is, err = mlkem.NewDecapsulationKey768(isB)
+		if err != nil {
+			return err
+		}
+
+		rsB, err := hex.DecodeString(rsStr)
+		if err != nil {
+			return err
+		}
+
+		rs, err = mlkem.NewEncapsulationKey768(rsB)
+		if err != nil {
+			return err
+		}
 	}
 
 	log.Println("connecting to", addr)
@@ -283,7 +313,17 @@ func stream(args []string) error {
 	}
 	defer conn.Close()
 
-	if _, err := io.Copy(conn, io.LimitReader(constReader{b: 0x22}, size)); err != nil {
+	var rw io.ReadWriter = conn
+	if is != nil && rs != nil {
+		log.Println("securely connecting to", addr)
+		rw, err = yrgourd.Initiate(conn, is, rs, nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	buf := make([]byte, 1024*1024)
+	if _, err := io.CopyBuffer(rw, io.LimitReader(constReader{b: 0x22}, size), buf); err != nil {
 		log.Println("error writing data", err)
 	}
 
@@ -302,11 +342,27 @@ func (c constReader) Read(p []byte) (n int, err error) {
 }
 
 func sink(args []string) error {
-	var addr string
+	var addr, rsStr string
 	cmd := flag.NewFlagSet("sink", flag.ExitOnError)
 	cmd.StringVar(&addr, "addr", "127.0.0.1:4040", "the address to listen on")
+	cmd.StringVar(&rsStr, "server_key", "", "the private key of the server, if any")
 	if err := cmd.Parse(args); err != nil {
 		return err
+	}
+
+	var rs *mlkem.DecapsulationKey768
+	if rsStr != "" {
+		rsB, err := hex.DecodeString(rsStr)
+		if err != nil {
+			return err
+		}
+
+		rs, err = mlkem.NewDecapsulationKey768(rsB)
+		if err != nil {
+			return err
+		}
+
+		log.Println("listening for yrgourd connections")
 	}
 
 	listener, err := net.Listen("tcp", addr)
@@ -327,8 +383,17 @@ func sink(args []string) error {
 			defer conn.Close()
 			defer log.Println("closed connection")
 
+			var rw io.ReadWriter = conn
+			if rs != nil {
+				rw, err = yrgourd.Respond(conn, rs, nil, yrgourd.AllowAllPolicy)
+				if err != nil {
+					log.Println("error during handshake", err)
+					return
+				}
+			}
+
 			start := time.Now()
-			n, err := io.Copy(io.Discard, conn)
+			n, err := io.Copy(io.Discard, rw)
 			if err != nil {
 				log.Println("error reading data", err)
 			}
@@ -364,7 +429,7 @@ func run(args []string) error {
 	}
 
 unknown:
-	return fmt.Errorf("expected \"generate-key\" subcommand")
+	return fmt.Errorf("expected 'generate-key', 'echo', 'connect', 'proxy', 'reverse-proxy', 'stream', or 'sink' subcommand")
 }
 
 func main() {
