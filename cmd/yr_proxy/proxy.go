@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/mlkem"
 	"encoding/hex"
 	"flag"
@@ -73,20 +74,20 @@ func main() {
 				return
 			}
 
-			close := make(chan struct{}, 2)
+			ctx, cancel := context.WithCancel(context.Background())
 			go func() {
 				if _, err := io.Copy(yrClient, conn); err != nil {
 					log.Println("error reading from client", err)
 				}
-				close <- struct{}{}
+				cancel()
 			}()
 			go func() {
 				if _, err := io.Copy(conn, yrClient); err != nil {
 					log.Println("error writing to server", err)
 				}
-				close <- struct{}{}
+				cancel()
 			}()
-			<-close
+			<-ctx.Done()
 		}()
 	}
 }

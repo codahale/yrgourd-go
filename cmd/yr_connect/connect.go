@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"io"
 	"log"
@@ -20,18 +21,18 @@ func main() {
 	}
 	defer conn.Close()
 
-	close := make(chan struct{}, 2)
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		if _, err := io.Copy(conn, os.Stdin); err != nil {
 			log.Println("error reading from stdin", err)
 		}
-		close <- struct{}{}
+		cancel()
 	}()
 	go func() {
 		if _, err := io.Copy(os.Stdout, conn); err != nil {
 			log.Println("error writing to stdout", err)
 		}
-		close <- struct{}{}
+		cancel()
 	}()
-	<-close
+	<-ctx.Done()
 }
