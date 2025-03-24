@@ -57,8 +57,10 @@ func main() {
 
 		go func() {
 			log.Println("accepted new connection")
-			defer conn.Close()
-			defer log.Println("closed connection")
+			defer func() {
+				_ = conn.Close()
+				log.Println("closed connection")
+			}()
 
 			log.Println("connecting to", *connect)
 			client, err := net.Dial("tcp", *connect)
@@ -66,7 +68,9 @@ func main() {
 				log.Println("error connecting", err)
 				return
 			}
-			defer client.Close()
+			defer func() {
+				_ = client.Close()
+			}()
 
 			yrClient, err := yrgourd.Initiate(client, is, rs, nil)
 			if err != nil {

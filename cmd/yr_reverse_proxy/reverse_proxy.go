@@ -52,8 +52,10 @@ func main() {
 			}
 
 			log.Println("accepted new connection")
-			defer conn.Close()
-			defer log.Println("closed connection")
+			defer func() {
+				_ = conn.Close()
+				log.Println("closed connection")
+			}()
 
 			log.Println("connecting to", *connect)
 			client, err := net.Dial("tcp", *connect)
@@ -61,7 +63,9 @@ func main() {
 				log.Println("error connecting", err)
 				return
 			}
-			defer client.Close()
+			defer func() {
+				_ = client.Close()
+			}()
 
 			ctx, cancel := context.WithCancel(context.Background())
 			go func() {

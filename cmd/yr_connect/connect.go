@@ -19,7 +19,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+		log.Println("closed connection")
+	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

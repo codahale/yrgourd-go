@@ -196,8 +196,10 @@ func TestHandshake(t *testing.T) {
 	}()
 	wg.Wait()
 
-	defer server.Close()
-	defer client.Close()
+	defer func() {
+		_ = server.Close()
+		_ = client.Close()
+	}()
 
 	serverSend := serverConn.send.Derive("a", nil, 8)
 	clientRecv := clientConn.recv.Derive("a", nil, 8)
