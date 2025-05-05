@@ -50,8 +50,10 @@ func main() {
 
 		go func(conn net.Conn) {
 			log.Println("accepted new connection")
-			defer conn.Close()
-			defer log.Println("closed connection")
+			defer func() {
+				_ = conn.Close()
+				log.Println("closed connection")
+			}()
 
 			var rw io.ReadWriter = conn
 			if rs != nil {

@@ -26,8 +26,10 @@ func main() {
 
 		go func() {
 			log.Println("accepted new connection")
-			defer conn.Close()
-			defer log.Println("closed connection")
+			defer func() {
+				_ = conn.Close()
+				log.Println("closed connection")
+			}()
 
 			for {
 				buf := make([]byte, 1024)

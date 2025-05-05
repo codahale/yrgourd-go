@@ -54,7 +54,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	var rw io.ReadWriter = conn
 	if is != nil && rs != nil {
