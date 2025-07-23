@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/mlkem"
+	"crypto/rand"
 	"encoding/hex"
 	"flag"
 	"io"
@@ -27,7 +27,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	is, err := mlkem.NewDecapsulationKey768(isB)
+	is, err := yrgourd.NewPrivateKey(isB)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	rs, err := mlkem.NewEncapsulationKey768(rsB)
+	rs, err := yrgourd.NewPublicKey(rsB)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func main() {
 				_ = client.Close()
 			}()
 
-			yrClient, err := yrgourd.Initiate(client, is, rs, nil)
+			yrClient, err := yrgourd.Initiate(client, is, rs, rand.Reader, nil)
 			if err != nil {
 				log.Println("error connecting", err)
 				return

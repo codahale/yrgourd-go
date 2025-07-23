@@ -1,14 +1,19 @@
 package yrgourd
 
 import (
-	"crypto/mlkem"
+	"crypto/ecdh"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
+	"github.com/codahale/elligator-squared-p256"
 	"github.com/codahale/lockstitch-go"
 )
+
+type PrivateKey = ecdh.PrivateKey
+type PublicKey = ecdh.PublicKey
 
 type Config struct {
 	RatchetAfterBytes int
@@ -23,22 +28,34 @@ var DefaultConfig = Config{
 var (
 	ErrInvalidHandshake    = errors.New("yrgourd: invalid handshake")
 	ErrInitiatorNotAllowed = errors.New("yrgourd: initiator not allowed")
-	AllowAllPolicy         = func(*mlkem.EncapsulationKey768) bool { return true }
+	AllowAllPolicy         = func(key *PublicKey) bool { return true }
 )
 
-func Initiate(rw io.ReadWriter, is *mlkem.DecapsulationKey768, rs *mlkem.EncapsulationKey768, config *Config) (io.ReadWriter, error) {
+func NewPublicKey(key []byte) (*PublicKey, error) {
+	return ecdh.P256().NewPublicKey(key)
+}
+
+func NewPrivateKey(key []byte) (*PrivateKey, error) {
+	return ecdh.P256().NewPrivateKey(key)
+}
+
+func GenerateKey(rand io.Reader) (*PrivateKey, error) {
+	return ecdh.P256().GenerateKey(rand)
+}
+
+func Initiate(rw io.ReadWriter, is *PrivateKey, rs *PublicKey, rand io.Reader, config *Config) (io.ReadWriter, error) {
 	if config == nil {
 		config = &DefaultConfig
 	}
 
+	// Allocate a buffer for the request.
+	req := make([]byte, 0, reqLen)
+
 	// Generate an ephemeral key pair.
-	ie, err := mlkem.GenerateKey768()
+	ie, err := GenerateKey(rand)
 	if err != nil {
 		return nil, err
 	}
-
-	// Allocate a buffer for the request.
-	req := make([]byte, 0, reqLen)
 
 	// Initialize a protocol.
 	yr := lockstitch.NewProtocol("yrgourd.v1")
@@ -46,62 +63,79 @@ func Initiate(rw io.ReadWriter, is *mlkem.DecapsulationKey768, rs *mlkem.Encapsu
 	// Mix the responder's static public key into the protocol.
 	yr.Mix("rs", rs.Bytes())
 
-	// Encapsulate a shared secret with the responser's static key.
-	rsSS, rsCT := rs.Encapsulate()
-	req = append(req, rsCT...)
+	// Mix the initiator's encoded ephemeral public key into the protocol.
+	ieEnc, err := elligator.Encode(ie.PublicKey().Bytes(), rand)
+	if err != nil {
+		return nil, err
+	}
+	req = append(req, ieEnc...)
+	yr.Mix("ie", req)
 
-	// Mix the ciphertext and shared secret into the protocol.
-	yr.Mix("rs_ct", rsCT)
-	yr.Mix("rs_ss", rsSS)
+	// Calculate and mix in the ephemeral-static shared secret.
+	ssIERS, err := ie.ECDH(rs)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+	yr.Mix("ie-rs", ssIERS)
 
-	// Encrypt the initiator's static public key.
-	req = yr.Encrypt("is", req, is.EncapsulationKey().Bytes())
-
-	// Seal the initiator's ephemeral public key.
-	req = yr.Seal("ie", req, ie.EncapsulationKey().Bytes())
+	// Seal the initiator's static public key.
+	req = yr.Seal("is", req, is.PublicKey().Bytes())
 
 	// Send the request.
 	if _, err := rw.Write(req); err != nil {
 		return nil, err
 	}
 
+	// Calculate and mix in the static-static shared secret.
+	ssISRS, err := is.ECDH(rs)
+	if err != nil {
+		return nil, ErrInvalidHandshake
+	}
+	yr.Mix("is-rs", ssISRS)
+
 	// Allocate a buffer for the response.
 	resp := make([]byte, respLen)
 
 	// Read the response.
 	if _, err := io.ReadFull(rw, resp); err != nil {
+		fmt.Println(err)
 		return nil, err
 	}
-	isCT, ieCT := resp[:mlkem.CiphertextSize768], resp[mlkem.CiphertextSize768:]
 
-	// Decrypt the ciphertext and decapsulate the static shared secret.
-	isCT = yr.Decrypt("is_ct", isCT[:0], isCT)
-	isSS, err := is.Decapsulate(isCT)
+	// Open the ciphertext and parse the responder's ephemeral public key.
+	respRE, err := yr.Open("re", resp[:0], resp)
 	if err != nil {
 		return nil, ErrInvalidHandshake
 	}
-	yr.Mix("is_ss", isSS)
+	re, err := NewPublicKey(respRE)
+	if err != nil {
+		return nil, ErrInvalidHandshake
+	}
 
-	// Open the ciphertext and decapsulate the ephemeral shared secret.
-	ieCT, err = yr.Open("ie_ct", ieCT[:0], ieCT)
+	// Calculate and mix in the static-ephemeral shared secret.
+	ssISREE, err := is.ECDH(re)
 	if err != nil {
 		return nil, ErrInvalidHandshake
 	}
-	ieSS, err := ie.Decapsulate(ieCT)
+	yr.Mix("is-re", ssISREE)
+
+	// Calculate and mix in the ephemeral-ephemeral shared secret.
+	ssIEREE, err := ie.ECDH(re)
 	if err != nil {
 		return nil, ErrInvalidHandshake
 	}
-	yr.Mix("ie_ss", ieSS)
+	yr.Mix("ie-re", ssIEREE)
 
 	// Fork the protocol into recv and send clones.
 	recv, send := yr.Clone(), yr
 	send.Mix("sender", []byte("initiator"))
 	recv.Mix("sender", []byte("responder"))
 
-	return newConnection(rw, recv, send, is, rs, config), nil
+	return newConnection(rw, recv, send, is, rs, rand, config), nil
 }
 
-func Respond(rw io.ReadWriter, rs *mlkem.DecapsulationKey768, config *Config, policy func(*mlkem.EncapsulationKey768) bool) (io.ReadWriter, error) {
+func Respond(rw io.ReadWriter, rs *PrivateKey, rand io.Reader, config *Config, policy func(key *PublicKey) bool) (io.ReadWriter, error) {
 	if config == nil {
 		config = &DefaultConfig
 	}
@@ -110,70 +144,94 @@ func Respond(rw io.ReadWriter, rs *mlkem.DecapsulationKey768, config *Config, po
 	yr := lockstitch.NewProtocol("yrgourd.v1")
 
 	// Mix the responder's static public key into the protocol.
-	yr.Mix("rs", rs.EncapsulationKey().Bytes())
+	yr.Mix("rs", rs.PublicKey().Bytes())
 
 	// Read the initiator's request.
 	req := make([]byte, reqLen)
 	if _, err := io.ReadFull(rw, req); err != nil {
 		return nil, err
 	}
-	rsCT, reqIS, reqIE := req[:mlkem.CiphertextSize768],
-		req[mlkem.CiphertextSize768:mlkem.CiphertextSize768+mlkem.EncapsulationKeySize768],
-		req[mlkem.CiphertextSize768+mlkem.EncapsulationKeySize768:]
 
-	// Decapsulate the shared secret.
-	yr.Mix("rs_ct", rsCT)
-	rsSS, err := rs.Decapsulate(rsCT)
+	// Decode the initiator's ephemeral key.
+	reqIE, reqIS := req[:elligatorPointLen], req[elligatorPointLen:]
+	yr.Mix("ie", reqIE)
+	reqIE, err := elligator.Decode(reqIE)
 	if err != nil {
 		return nil, ErrInvalidHandshake
 	}
-	yr.Mix("rs_ss", rsSS)
 
-	// Decrypt and decode the initiator's static key.
-	is, err := mlkem.NewEncapsulationKey768(yr.Decrypt("is", reqIS[:0], reqIS))
+	// Parse the initiator's ephemeral public key.
+	ie, err := NewPublicKey(reqIE)
+	if err != nil {
+		panic(err) // should never happen
+	}
+
+	// Calculate and mix in the ephemeral-static shared secret.
+	ssIERS, err := rs.ECDH(ie)
 	if err != nil {
 		return nil, err
 	}
+	yr.Mix("ie-rs", ssIERS)
 
-	// Check the initiator's static key against the policy.
+	// Open and decode the initiator's static public key.
+	reqIS, err = yr.Open("is", reqIS[:0], reqIS)
+	if err != nil {
+		return nil, ErrInvalidHandshake
+	}
+	is, err := NewPublicKey(reqIS)
+	if err != nil {
+		return nil, ErrInvalidHandshake
+	}
+
+	// Check the initiator's static public key against the policy.
 	if !policy(is) {
 		return nil, ErrInitiatorNotAllowed
-	}
-
-	// Open and decode the initiator's ephemeral key.
-	reqIE, err = yr.Open("ie", reqIE[:0], reqIE)
-	if err != nil {
-		return nil, ErrInvalidHandshake
-	}
-	ie, err := mlkem.NewEncapsulationKey768(reqIE)
-	if err != nil {
-		return nil, ErrInvalidHandshake
 	}
 
 	// Allocate a buffer for the response.
 	resp := make([]byte, 0, respLen)
 
-	// Encapsulate a shared secret with the initiator's static key and encrypt it.
-	isSS, isCT := is.Encapsulate()
-	resp = yr.Encrypt("is_ct", resp, isCT)
-	yr.Mix("is_ss", isSS)
+	// Calculate and mix in the static-static shared secret.
+	ssISRS, err := rs.ECDH(is)
+	if err != nil {
+		return nil, ErrInvalidHandshake
+	}
+	yr.Mix("is-rs", ssISRS)
 
-	// Encapsulate a shared secret with the initiator's ephemeral key and seal it.
-	ieSS, ieCT := ie.Encapsulate()
-	resp = yr.Seal("ie_ct", resp, ieCT)
-	yr.Mix("ie_ss", ieSS)
+	// Generate an ephemeral key pair.
+	re, err := GenerateKey(rand)
+	if err != nil {
+		return nil, err
+	}
+
+	// Seal the ephemeral public key.
+	resp = yr.Seal("re", resp[:0], re.PublicKey().Bytes())
 
 	// Send the response.
 	if _, err := rw.Write(resp); err != nil {
 		return nil, err
 	}
 
+	// Calculate and mix in the static-ephemeral shared secret.
+	ssISREE, err := re.ECDH(is)
+	if err != nil {
+		return nil, ErrInvalidHandshake
+	}
+	yr.Mix("is-re", ssISREE)
+
+	// Calculate and mix in the ephemeral-ephemeral shared secret.
+	ssIEREE, err := re.ECDH(ie)
+	if err != nil {
+		return nil, ErrInvalidHandshake
+	}
+	yr.Mix("ie-re", ssIEREE)
+
 	// Fork the protocol into recv and send clones.
 	recv, send := yr.Clone(), yr
 	recv.Mix("sender", []byte("initiator"))
 	send.Mix("sender", []byte("responder"))
 
-	return newConnection(rw, recv, send, rs, is, config), nil
+	return newConnection(rw, recv, send, rs, is, rand, config), nil
 }
 
 type connection struct {
@@ -181,21 +239,23 @@ type connection struct {
 	recv                     lockstitch.Protocol
 	send                     lockstitch.Protocol
 	recvBuf, msgBuf, sendBuf []byte
-	dk                       *mlkem.DecapsulationKey768
-	ek                       *mlkem.EncapsulationKey768
+	localKey                 *PrivateKey
+	remoteKey                *PublicKey
+	rand                     io.Reader
 	sentBytes                int
 	lastRatchet              time.Time
 	ratchetAfterBytes        int
 	ratchetAfterTime         time.Duration
 }
 
-func newConnection(rw io.ReadWriter, recv, send lockstitch.Protocol, dk *mlkem.DecapsulationKey768, ek *mlkem.EncapsulationKey768, config *Config) io.ReadWriter {
+func newConnection(rw io.ReadWriter, recv, send lockstitch.Protocol, localKey *PrivateKey, remoteKey *PublicKey, rand io.Reader, config *Config) io.ReadWriter {
 	return &connection{
 		rw:                rw,
 		recv:              recv,
 		send:              send,
-		dk:                dk,
-		ek:                ek,
+		localKey:          localKey,
+		remoteKey:         remoteKey,
+		rand:              rand,
 		lastRatchet:       time.Now(),
 		ratchetAfterBytes: config.RatchetAfterBytes,
 		ratchetAfterTime:  config.RatchetAfterTime,
@@ -223,9 +283,9 @@ func (c *connection) Read(p []byte) (n int, err error) {
 	header = c.recv.Decrypt("header", header[:1], header[4:])
 	messageLen := int(binary.BigEndian.Uint32(header))
 
-	// If the header is all-zeroes, the message is an ML-KEM ciphertext and we need to ratchet.
+	// If the header is all-zeroes, the message is an encrypted ephemeral public key and we need to ratchet.
 	if messageLen == 0 {
-		ratchetCT := allocSlice(c.recvBuf[:0], mlkem.CiphertextSize768+lockstitch.TagLen)
+		ratchetCT := allocSlice(c.recvBuf[:0], pointLen+lockstitch.TagLen)
 		if _, err := io.ReadFull(c.rw, ratchetCT); err != nil {
 			return 0, err
 		}
@@ -233,12 +293,15 @@ func (c *connection) Read(p []byte) (n int, err error) {
 		if err != nil {
 			return 0, err
 		}
-
-		ratchetSS, err := c.dk.Decapsulate(ratchetCT)
+		ephemeral, err := NewPublicKey(ratchetCT)
 		if err != nil {
 			return 0, err
 		}
-		c.send.Mix("ratchet-ss", ratchetSS)
+		ss, err := c.localKey.ECDH(ephemeral)
+		if err != nil {
+			return 0, err
+		}
+		c.send.Mix("ratchet-ss", ss)
 
 		// Re-try the read.
 		return c.Read(p)
@@ -271,21 +334,28 @@ func (c *connection) Write(p []byte) (n int, err error) {
 		c.sentBytes = 0
 		c.lastRatchet = now
 
-		// Encapsulate a shared secret with the receiver's encapsulation key.
-		ratchetSS, ratchetCT := c.ek.Encapsulate()
+		// Generate an ephemeral key pair.
+		ephemeral, err := GenerateKey(c.rand)
+		if err != nil {
+			return 0, err
+		}
 
 		// Encrypt an all-zeroes header.
 		header := allocSlice(c.sendBuf[:0], 4)
 		header = c.send.Encrypt("header", header[:0], header[:3])
 
-		// Seal the encapsulated key, append it to the header, and send both.
-		message := c.send.Seal("message", header, ratchetCT)
+		// Seal the ephemeral public key, append it to the header, and send both.
+		message := c.send.Seal("message", header, ephemeral.PublicKey().Bytes())
 		if n, err := c.rw.Write(message); err != nil {
 			return n, err
 		}
 
-		// Mix the shared secret into the send protocol.
-		c.send.Mix("ratchet-ss", ratchetSS)
+		// Calculate and mix in the shared secret.
+		ss, err := ephemeral.ECDH(c.remoteKey)
+		if err != nil {
+			return 0, err
+		}
+		c.send.Mix("ratchet-ss", ss)
 	}
 
 	// Encode a header with a 3-byte big endian message length and encrypt it.
@@ -314,8 +384,11 @@ func allocSlice(in []byte, n int) []byte {
 }
 
 const (
-	// rsCT + is + ie + tag
-	reqLen = mlkem.CiphertextSize768 + mlkem.EncapsulationKeySize768 + mlkem.EncapsulationKeySize768 + lockstitch.TagLen
-	// isCT + ieCT + tag
-	respLen = mlkem.CiphertextSize768 + mlkem.CiphertextSize768 + lockstitch.TagLen
+	elligatorPointLen = 64
+	pointLen          = 65
+
+	// elligator(ie) + is + tag
+	reqLen = elligatorPointLen + pointLen + lockstitch.TagLen
+	// re + tag
+	respLen = pointLen + lockstitch.TagLen
 )

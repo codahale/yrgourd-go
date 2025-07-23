@@ -3,7 +3,7 @@ package yrgourd
 import (
 	"bufio"
 	"bytes"
-	"crypto/mlkem"
+	"crypto/rand"
 	"io"
 	"net"
 	"sync"
@@ -12,7 +12,7 @@ import (
 )
 
 func TestRoundTrip(t *testing.T) {
-	rs, err := mlkem.GenerateKey768()
+	rs, err := GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestRoundTrip(t *testing.T) {
 		defer wg.Done()
 
 		t.Log("server responding")
-		rw, err := Respond(server, rs, nil, AllowAllPolicy)
+		rw, err := Respond(server, rs, rand.Reader, nil, AllowAllPolicy)
 		if err != nil {
 			t.Error("respond error:", err)
 		}
@@ -57,13 +57,13 @@ func TestRoundTrip(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		is, err := mlkem.GenerateKey768()
+		is, err := GenerateKey(rand.Reader)
 		if err != nil {
 			t.Error(err)
 		}
 
 		t.Log("client initiating")
-		rw, err := Initiate(client, is, rs.EncapsulationKey(), nil)
+		rw, err := Initiate(client, is, rs.PublicKey(), rand.Reader, nil)
 		if err != nil {
 			t.Error("initiate error:", err)
 		}
@@ -103,7 +103,7 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestRatcheting(t *testing.T) {
-	rs, err := mlkem.GenerateKey768()
+	rs, err := GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestRatcheting(t *testing.T) {
 		defer wg.Done()
 
 		t.Log("server responding")
-		rw, err := Respond(server, rs, &Config{RatchetAfterBytes: 0, RatchetAfterTime: 0 * time.Second}, AllowAllPolicy)
+		rw, err := Respond(server, rs, rand.Reader, &Config{RatchetAfterBytes: 0, RatchetAfterTime: 0 * time.Second}, AllowAllPolicy)
 		if err != nil {
 			t.Error("respond error:", err)
 		}
@@ -137,13 +137,13 @@ func TestRatcheting(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		is, err := mlkem.GenerateKey768()
+		is, err := GenerateKey(rand.Reader)
 		if err != nil {
 			t.Error(err)
 		}
 
 		t.Log("client initiating")
-		rw, err := Initiate(client, is, rs.EncapsulationKey(), nil)
+		rw, err := Initiate(client, is, rs.PublicKey(), rand.Reader, nil)
 		if err != nil {
 			t.Error("initiate error:", err)
 		}
@@ -160,12 +160,18 @@ func TestRatcheting(t *testing.T) {
 }
 
 func TestHandshake(t *testing.T) {
-	rs, err := mlkem.GenerateKey768()
+	rs, err := GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	client, server := net.Pipe()
+	if err := client.SetDeadline(time.Now().Add(1 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.SetDeadline(time.Now().Add(1 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	var clientConn, serverConn *connection
 
 	wg := new(sync.WaitGroup)
@@ -173,28 +179,39 @@ func TestHandshake(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		rw, err := Respond(server, rs, nil, AllowAllPolicy)
+		rw, err := Respond(server, rs, rand.Reader, nil, AllowAllPolicy)
 		if err != nil {
 			t.Error("respond error:", err)
+			return
 		}
 		serverConn = rw.(*connection)
 	}()
 	go func() {
 		defer wg.Done()
 
-		is, err := mlkem.GenerateKey768()
+		is, err := GenerateKey(rand.Reader)
 		if err != nil {
 			t.Error(err)
+			return
 		}
 
-		rw, err := Initiate(client, is, rs.EncapsulationKey(), nil)
+		rw, err := Initiate(client, is, rs.PublicKey(), rand.Reader, nil)
 		if err != nil {
 			t.Error("initiate error:", err)
+			return
 		}
 
 		clientConn = rw.(*connection)
 	}()
 	wg.Wait()
+
+	if clientConn == nil {
+		t.Fatal("client is nil")
+	}
+
+	if serverConn == nil {
+		t.Fatal("server is nil")
+	}
 
 	defer func() {
 		_ = server.Close()

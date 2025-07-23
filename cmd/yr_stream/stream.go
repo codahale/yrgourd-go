@@ -1,7 +1,8 @@
 package main
 
 import (
-	"crypto/mlkem"
+	"crypto/ecdh"
+	"crypto/rand"
 	"encoding/hex"
 	"flag"
 	"io"
@@ -25,15 +26,15 @@ func main() {
 		log.Fatalf("must specify either both -client_key and -server_key or neither")
 	}
 
-	var is *mlkem.DecapsulationKey768
-	var rs *mlkem.EncapsulationKey768
+	var is *ecdh.PrivateKey
+	var rs *ecdh.PublicKey
 	if *isStr != "" && *rsStr != "" {
 		isB, err := hex.DecodeString(*isStr)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		is, err = mlkem.NewDecapsulationKey768(isB)
+		is, err = yrgourd.NewPrivateKey(isB)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -43,7 +44,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		rs, err = mlkem.NewEncapsulationKey768(rsB)
+		rs, err = yrgourd.NewPublicKey(rsB)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -61,7 +62,7 @@ func main() {
 	var rw io.ReadWriter = conn
 	if is != nil && rs != nil {
 		log.Println("securely connecting to", *addr)
-		rw, err = yrgourd.Initiate(conn, is, rs, nil)
+		rw, err = yrgourd.Initiate(conn, is, rs, rand.Reader, nil)
 		if err != nil {
 			log.Fatal(err)
 		}

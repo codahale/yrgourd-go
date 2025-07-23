@@ -1,2 +1,8 @@
-github.com/codahale/lockstitch-go v0.0.0-20250306230535-396ce9711842 h1:LIdd0LvDDoNybrZDlq3LPtu7bkq78M/ieKGYEL2/ysY=
-github.com/codahale/lockstitch-go v0.0.0-20250306230535-396ce9711842/go.mod h1:1LbX/yKejmfi3dm7pKuUaD8MeQ+D7qk1RXAx+U7h+KA=
+github.com/codahale/elligator-squared-p256 v0.0.0-20250723135658-efcc23853311 h1:BcsM6fS/3YL22tuEK+qmpXbGVUKj9cbdgT9yGB5omIc=
+github.com/codahale/elligator-squared-p256 v0.0.0-20250723135658-efcc23853311/go.mod h1:uH8HddehyK7OCTpfaIR34rkvnGJb+CN8UIgNvHbgt20=
+github.com/codahale/elligator-squared-p256 v0.0.0-20250723161622-0d1b5e27e90f h1:3v6avr17dQGdx246ziomAuIBPbfgBv+ezlKHJOrZty8=
+github.com/codahale/elligator-squared-p256 v0.0.0-20250723161622-0d1b5e27e90f/go.mod h1:uH8HddehyK7OCTpfaIR34rkvnGJb+CN8UIgNvHbgt20=
+github.com/codahale/lockstitch-go v0.0.0-20250531191028-ed43f7e2b77b h1:yBk88jrXdZd1KkTC/cFVLpx7qMTqsutRN8RYv+QD614=
+github.com/codahale/lockstitch-go v0.0.0-20250531191028-ed43f7e2b77b/go.mod h1:1LbX/yKejmfi3dm7pKuUaD8MeQ+D7qk1RXAx+U7h+KA=
+github.com/mit-plv/fiat-crypto/fiat-go v0.0.0-20250722125027-b12a4a96537c h1:o5NARvavy3Ym2QNhDqfSoOCoOA0sPhhgykGfJd7fbxk=
+github.com/mit-plv/fiat-crypto/fiat-go v0.0.0-20250722125027-b12a4a96537c/go.mod h1:59UI5/2yBTcSl1/+qCCOTsfXYy290H670oWjGFRqOLs=

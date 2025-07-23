@@ -1,7 +1,7 @@
 package yrgourd
 
 import (
-	"crypto/mlkem"
+	"crypto/rand"
 	"math"
 	"testing"
 	"time"
@@ -10,12 +10,17 @@ import (
 )
 
 func BenchmarkConnectionWrite(b *testing.B) {
+	k, err := GenerateKey(rand.Reader)
+	if err != nil {
+		b.Error(err)
+	}
+
 	conn := &connection{
 		rw:                &testReadWriteCloser{},
 		recv:              lockstitch.NewProtocol("recv"),
 		send:              lockstitch.NewProtocol("send"),
-		dk:                &mlkem.DecapsulationKey768{},
-		ek:                &mlkem.EncapsulationKey768{},
+		localKey:          k,
+		remoteKey:         k.PublicKey(),
 		sendBuf:           make([]byte, 1024*1024*10),
 		lastRatchet:       time.Now(),
 		ratchetAfterBytes: math.MaxInt,

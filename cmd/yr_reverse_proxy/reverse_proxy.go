@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/mlkem"
+	"crypto/rand"
 	"encoding/hex"
 	"flag"
 	"io"
@@ -26,7 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	rs, err := mlkem.NewDecapsulationKey768(rsB)
+	rs, err := yrgourd.NewPrivateKey(rsB)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func main() {
 		}
 
 		go func() {
-			yrConn, err := yrgourd.Respond(conn, rs, nil, yrgourd.AllowAllPolicy)
+			yrConn, err := yrgourd.Respond(conn, rs, rand.Reader, nil, yrgourd.AllowAllPolicy)
 			if err != nil {
 				log.Println("error responding", err)
 				return

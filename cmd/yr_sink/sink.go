@@ -1,7 +1,8 @@
 package main
 
 import (
-	"crypto/mlkem"
+	"crypto/ecdh"
+	"crypto/rand"
 	"encoding/hex"
 	"flag"
 	"io"
@@ -20,14 +21,14 @@ var (
 func main() {
 	flag.Parse()
 
-	var rs *mlkem.DecapsulationKey768
+	var rs *ecdh.PrivateKey
 	if *rsStr != "" {
 		rsB, err := hex.DecodeString(*rsStr)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		rs, err = mlkem.NewDecapsulationKey768(rsB)
+		rs, err = yrgourd.NewPrivateKey(rsB)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -57,7 +58,7 @@ func main() {
 
 			var rw io.ReadWriter = conn
 			if rs != nil {
-				rw, err = yrgourd.Respond(conn, rs, nil, yrgourd.AllowAllPolicy)
+				rw, err = yrgourd.Respond(conn, rs, rand.Reader, nil, yrgourd.AllowAllPolicy)
 				if err != nil {
 					log.Println("error during handshake", err)
 					return
@@ -71,7 +72,7 @@ func main() {
 			}
 			elapsed := time.Since(start)
 
-			log.Printf("read %v bytes in %v (%f MiB/sec)", n, elapsed, float64(n)/1024/1024/float64(elapsed.Seconds()))
+			log.Printf("read %v bytes in %v (%f MiB/sec)", n, elapsed, float64(n)/1024/1024/elapsed.Seconds())
 		}(conn)
 	}
 }

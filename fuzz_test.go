@@ -2,19 +2,19 @@ package yrgourd_test
 
 import (
 	"bytes"
-	"crypto/mlkem"
+	"crypto/rand"
 	"testing"
 
 	"github.com/codahale/yrgourd-go"
 )
 
 func FuzzInitiate(f *testing.F) {
-	is, err := mlkem.GenerateKey768()
+	is, err := yrgourd.GenerateKey(rand.Reader)
 	if err != nil {
 		f.Fatal(err)
 	}
 
-	rs, err := mlkem.GenerateKey768()
+	rs, err := yrgourd.GenerateKey(rand.Reader)
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func FuzzInitiate(f *testing.F) {
 	f.Add([]byte("some garbage"))
 	f.Fuzz(func(t *testing.T, a []byte) {
 		b := bytes.NewBuffer(a)
-		conn, err := yrgourd.Initiate(b, is, rs.EncapsulationKey(), nil)
+		conn, err := yrgourd.Initiate(b, is, rs.PublicKey(), rand.Reader, nil)
 		if err == nil {
 			t.Errorf("should not have initiated but did: %v", conn)
 		}
@@ -30,16 +30,15 @@ func FuzzInitiate(f *testing.F) {
 }
 
 func FuzzRespond(f *testing.F) {
-	rs, err := mlkem.GenerateKey768()
+	rs, err := yrgourd.GenerateKey(rand.Reader)
 	if err != nil {
 		f.Fatal(err)
 	}
 
 	f.Add([]byte("some garbage"))
 	f.Fuzz(func(t *testing.T, a []byte) {
-		t.Log(a)
 		b := bytes.NewBuffer(a)
-		conn, err := yrgourd.Respond(b, rs, nil, yrgourd.AllowAllPolicy)
+		conn, err := yrgourd.Respond(b, rs, rand.Reader, nil, yrgourd.AllowAllPolicy)
 		if err == nil {
 			t.Errorf("should not have responded but did: %v", conn)
 		}
